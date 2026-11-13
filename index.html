@@ -1,0 +1,91 @@
+<!doctype html>
+<html lang="it">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="theme-color" content="#1d3a6e" />
+    <meta name="description" content="Lavagna digitale per disegnare schemi ed esercizi di basket ed esportarli in PDF" />
+    <link rel="icon" href="./icon.svg" type="image/svg+xml" />
+    <link rel="apple-touch-icon" href="./icon-192.png" />
+    <link rel="manifest" href="./manifest.webmanifest" />
+    <title>Lavagna Basket</title>
+  </head>
+  <body>
+    <header class="topbar">
+      <button id="btn-library" class="btn" title="Libreria schemi">
+        <span class="i">☰</span><span class="lbl">Libreria</span>
+      </button>
+      <input id="play-title" class="title-input" placeholder="Titolo schema" aria-label="Titolo schema" />
+      <div class="top-actions">
+        <button id="btn-undo" class="btn icon" title="Annulla (Ctrl+Z)">↶</button>
+        <button id="btn-redo" class="btn icon" title="Ripeti (Ctrl+Y)">↷</button>
+        <button id="btn-png" class="btn" title="Scarica la fase come immagine"><span class="lbl">Immagine</span><span class="i only-mobile">🖼</span></button>
+        <button id="btn-pdf" class="btn primary" title="Esporta PDF">PDF</button>
+        <button id="btn-panel" class="btn only-mobile" title="Dettagli">Dettagli</button>
+      </div>
+    </header>
+
+    <main class="layout">
+      <nav id="toolbar" class="toolbar" aria-label="Strumenti"></nav>
+
+      <section class="stage">
+        <div id="board" class="board"></div>
+        <div class="phasebar">
+          <div id="phases" class="phase-list"></div>
+          <div class="phase-actions">
+            <button id="ph-next" class="btn primary" title="Nuova fase: i giocatori si spostano alla fine dei loro movimenti">+ Fase</button>
+            <button id="ph-dup" class="btn" title="Duplica fase">Duplica</button>
+            <button id="ph-left" class="btn icon" title="Sposta fase a sinistra">◀</button>
+            <button id="ph-right" class="btn icon" title="Sposta fase a destra">▶</button>
+            <button id="ph-del" class="btn danger" title="Elimina fase">Elimina</button>
+          </div>
+        </div>
+      </section>
+
+      <aside id="panel" class="panel"></aside>
+    </main>
+
+    <dialog id="library" class="library">
+      <div class="lib-head">
+        <h2>Libreria</h2>
+        <button class="btn icon" data-close title="Chiudi">✕</button>
+      </div>
+      <div class="lib-new">
+        <button id="new-half" class="btn primary">+ Nuovo · Metà campo</button>
+        <button id="new-full" class="btn primary">+ Nuovo · Campo intero</button>
+      </div>
+      <div class="lib-filters">
+        <input id="lib-search" type="search" placeholder="Cerca…" />
+        <select id="lib-cat"></select>
+      </div>
+      <div id="lib-list" class="lib-list"></div>
+      <div class="lib-foot">
+        <div class="lib-sel">
+          <label><input type="checkbox" id="lib-all" /> Seleziona tutti</label>
+          <span id="lib-count"></span>
+        </div>
+        <div class="lib-buttons">
+          <button id="lib-playbook" class="btn primary">Playbook PDF</button>
+          <button id="lib-export" class="btn">Esporta file</button>
+          <button id="lib-import" class="btn">Importa file</button>
+          <input id="lib-file" type="file" accept=".json,application/json" hidden />
+        </div>
+        <details class="lib-settings">
+          <summary>Impostazioni</summary>
+          <label>Nome squadra (piè di pagina PDF)
+            <input id="set-team" placeholder="es. Under 16 Basket Club" />
+          </label>
+          <label>Stile campo
+            <select id="set-style">
+              <option value="wood">Parquet</option>
+              <option value="white">Bianco (meno inchiostro)</option>
+            </select>
+          </label>
+        </details>
+      </div>
+    </dialog>
+
+    <div id="toast" class="toast" role="status" aria-live="polite"></div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
