@@ -1,6 +1,6 @@
 import { basketPositions, COURT_SIZE, MARGIN } from './court';
 import { lineEnds } from './geometry';
-import type { CourtType, Line, Phase, Play, Pt, Token, TokenKind } from './types';
+import type { Branch, CourtType, Line, Phase, Play, Pt, Token, TokenKind } from './types';
 
 export function uid(): string {
   return Math.random().toString(36).slice(2, 10) + Date.now().toString(36).slice(-4);
@@ -9,6 +9,46 @@ export function uid(): string {
 export const clone = <T>(v: T): T => JSON.parse(JSON.stringify(v));
 
 export const courtLabel = (p: Play) => (p.court === 'half' ? 'Metà campo' : 'Campo intero');
+
+// ------------------------------------------------------------ alternatives
+
+/** Index in the main line where a branch starts (-1 if its phase is gone). */
+export const branchStart = (play: Play, b: Branch) => play.phases.findIndex((p) => p.id === b.fromPhase);
+
+/** Branches ordered by their starting phase (this order defines the letters A, B, C…). */
+export function sortedBranches(play: Play): Branch[] {
+  const list = (play.branches ?? []).filter((b) => branchStart(play, b) >= 0);
+  return list
+    .map((b, i) => ({ b, i, s: branchStart(play, b) }))
+    .sort((x, y) => x.s - y.s || x.i - y.i)
+    .map((x) => x.b);
+}
+
+export function branchLetter(play: Play, branchId: string): string {
+  const i = sortedBranches(play).findIndex((b) => b.id === branchId);
+  let n = Math.max(0, i);
+  let s = '';
+  do {
+    s = String.fromCharCode(65 + (n % 26)) + s;
+    n = Math.floor(n / 26) - 1;
+  } while (n >= 0);
+  return s;
+}
+
+export const branchesFrom = (play: Play, phaseId: string) => sortedBranches(play).filter((b) => b.fromPhase === phaseId);
+
+/** "3" for the main line, "3A" for the first phase of alternative A starting at phase 2. */
+export function phaseLabel(play: Play, branch: Branch | null, index: number): string {
+  if (!branch) return String(index + 1);
+  return `${branchStart(play, branch) + 2 + index}${branchLetter(play, branch.id)}`;
+}
+
+export function branchTitle(play: Play, b: Branch): string {
+  return `Alternativa ${branchLetter(play, b.id)}${b.name.trim() ? ' · ' + b.name.trim() : ''}`;
+}
+
+/** Every phase of the play, main line and alternatives. */
+export const allPhases = (play: Play): Phase[] => [...play.phases, ...(play.branches ?? []).flatMap((b) => b.phases)];
 
 export function emptyPhase(): Phase {
   return { id: uid(), note: '', tokens: [], lines: [] };
@@ -113,7 +153,7 @@ export function convertCourt(play: Play, to: CourtType): void {
     y: Math.max(-MARGIN + 2, Math.min(h + MARGIN - 2, p.y)),
   });
   const map = (p: Pt) => clamp(f(p));
-  for (const ph of play.phases) {
+  for (const ph of allPhases(play)) {
     for (const t of ph.tokens) Object.assign(t, map(t));
     for (const l of ph.lines) {
       l.points = l.points.map(map);

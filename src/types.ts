@@ -46,6 +46,17 @@ export interface Phase {
   lines: Line[];
 }
 
+/**
+ * An alternative continuation: instead of the main line going on after
+ * `fromPhase` (a main-line phase id), these phases happen.
+ */
+export interface Branch {
+  id: string;
+  name: string;
+  fromPhase: string;
+  phases: Phase[];
+}
+
 export interface Play {
   id: string;
   title: string;
@@ -53,7 +64,10 @@ export interface Play {
   court: CourtType;
   objective: string;
   description: string;
+  /** Main line. */
   phases: Phase[];
+  /** Alternatives (one level: they always start from a main-line phase). */
+  branches?: Branch[];
   createdAt: number;
   updatedAt: number;
 }

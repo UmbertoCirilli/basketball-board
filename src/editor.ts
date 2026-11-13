@@ -1,9 +1,9 @@
 import { basketPositions } from './court';
 import { ctrlThrough, dist, distToPolyline, lineEnds, simplify } from './geometry';
-import { clone, makeToken, nextPhaseFrom, uid } from './model';
+import { branchStart, clone, makeToken, nextPhaseFrom, uid } from './model';
 import { renderPhase, TOKEN_R, tokenMap } from './render';
 import type { AppSettings } from './store';
-import type { Line, LineKind, Phase, Play, Pt, Token, TokenKind } from './types';
+import type { Branch, Line, LineKind, Phase, Play, Pt, Token, TokenKind } from './types';
 
 export type Tool = 'select' | TokenKind | LineKind;
 
@@ -55,8 +55,33 @@ export class Editor {
     this.render();
   }
 
+  /** Alternative being edited (null = main line). */
+  branchId: string | null = null;
+
+  get branch(): Branch | null {
+    return (this.branchId && this.play.branches?.find((b) => b.id === this.branchId)) || null;
+  }
+
+  /** Sequence being edited: the main line or the current alternative. */
+  get seq(): Phase[] {
+    return this.branch?.phases ?? this.play.phases;
+  }
+
   get phase(): Phase {
-    return this.play.phases[this.phaseIndex];
+    return this.seq[this.phaseIndex];
+  }
+
+  /** Phase that comes before the current one (for the ghost overlay). */
+  private previousPhase(): Phase | undefined {
+    if (this.phaseIndex > 0) return this.seq[this.phaseIndex - 1];
+    const b = this.branch;
+    return b ? this.play.phases[branchStart(this.play, b)] : undefined;
+  }
+
+  /** Main-line phase index where the current alternative starts (or the current index). */
+  branchPointIndex(): number {
+    const b = this.branch;
+    return b ? branchStart(this.play, b) : this.phaseIndex;
   }
 
   // ------------------------------------------------------------ state
@@ -64,6 +89,7 @@ export class Editor {
   load(play: Play): void {
     this.play = play;
     this.phaseIndex = 0;
+    this.branchId = null;
     this.selectedId = null;
     this.undoStack = [];
     this.redoStack = [];
@@ -106,7 +132,8 @@ export class Editor {
   private restore(json: string): void {
     this.snapshot = json;
     this.play = JSON.parse(json);
-    this.phaseIndex = Math.min(this.phaseIndex, this.play.phases.length - 1);
+    if (!this.branch) this.branchId = null;
+    this.phaseIndex = Math.min(this.phaseIndex, this.seq.length - 1);
     this.selectedId = null;
     this.render();
     this.onChange(true);
@@ -125,8 +152,11 @@ export class Editor {
     this.onChange(false);
   }
 
-  goToPhase(i: number): void {
-    this.phaseIndex = Math.max(0, Math.min(this.play.phases.length - 1, i));
+  /** Opens phase `i` of the main line (branchId = null) or of an alternative. */
+  goToPhase(i: number, branchId: string | null = this.branchId): void {
+    this.branchId = branchId;
+    if (!this.branch) this.branchId = null;
+    this.phaseIndex = Math.max(0, Math.min(this.seq.length - 1, i));
     this.selectedId = null;
     this.render();
     this.onChange(false);
@@ -135,7 +165,7 @@ export class Editor {
   // ------------------------------------------------------------ phases
 
   addNextPhase(): void {
-    this.play.phases.splice(this.phaseIndex + 1, 0, nextPhaseFrom(this.phase));
+    this.seq.splice(this.phaseIndex + 1, 0, nextPhaseFrom(this.phase));
     this.phaseIndex++;
     this.selectedId = null;
     this.commit();
@@ -144,17 +174,29 @@ export class Editor {
   duplicatePhase(): void {
     const copy = clone(this.phase);
     copy.id = uid();
-    this.play.phases.splice(this.phaseIndex + 1, 0, copy);
+    this.seq.splice(this.phaseIndex + 1, 0, copy);
     this.phaseIndex++;
     this.commit();
   }
 
+  /**
+   * Deletes the current phase. In the main line this also removes the
+   * alternatives starting from it; deleting the only phase of an
+   * alternative removes the alternative.
+   */
   deletePhase(): void {
-    if (this.play.phases.length <= 1) {
+    const b = this.branch;
+    if (b && b.phases.length <= 1) {
+      this.deleteBranch(b.id);
+      return;
+    }
+    if (!b && this.play.phases.length <= 1) {
       this.play.phases[0] = { ...this.phase, tokens: [], lines: [], note: '' };
+      this.play.branches = [];
     } else {
-      this.play.phases.splice(this.phaseIndex, 1);
-      this.phaseIndex = Math.min(this.phaseIndex, this.play.phases.length - 1);
+      const removed = this.seq.splice(this.phaseIndex, 1)[0];
+      if (!b) this.play.branches = (this.play.branches ?? []).filter((x) => x.fromPhase !== removed.id);
+      this.phaseIndex = Math.min(this.phaseIndex, this.seq.length - 1);
     }
     this.selectedId = null;
     this.commit();
@@ -162,10 +204,39 @@ export class Editor {
 
   movePhase(delta: number): void {
     const j = this.phaseIndex + delta;
-    if (j < 0 || j >= this.play.phases.length) return;
-    const ph = this.play.phases;
+    const ph = this.seq;
+    if (j < 0 || j >= ph.length) return;
     [ph[this.phaseIndex], ph[j]] = [ph[j], ph[this.phaseIndex]];
     this.phaseIndex = j;
+    this.commit();
+  }
+
+  // ------------------------------------------------------------ alternatives
+
+  /**
+   * New alternative starting from the current main-line phase (or, inside an
+   * alternative, from the same phase that alternative starts from).
+   */
+  addAlternative(): void {
+    const from = this.play.phases[this.branchPointIndex()];
+    const branch: Branch = { id: uid(), name: '', fromPhase: from.id, phases: [nextPhaseFrom(from)] };
+    (this.play.branches ??= []).push(branch);
+    this.branchId = branch.id;
+    this.phaseIndex = 0;
+    this.selectedId = null;
+    this.commit();
+  }
+
+  deleteBranch(id: string): void {
+    const b = this.play.branches?.find((x) => x.id === id);
+    if (!b) return;
+    const start = branchStart(this.play, b);
+    this.play.branches = this.play.branches!.filter((x) => x.id !== id);
+    if (this.branchId === id) {
+      this.branchId = null;
+      this.phaseIndex = Math.max(0, start);
+    }
+    this.selectedId = null;
     this.commit();
   }
 
@@ -209,7 +280,7 @@ export class Editor {
   // ------------------------------------------------------------ rendering
 
   render(): void {
-    const prev = this.showGhost && this.phaseIndex > 0 ? this.play.phases[this.phaseIndex - 1].tokens : undefined;
+    const prev = this.showGhost ? this.previousPhase()?.tokens : undefined;
     const fresh = renderPhase(this.play, this.phase, {
       style: this.settings().courtStyle,
       selectedId: this.selectedId,

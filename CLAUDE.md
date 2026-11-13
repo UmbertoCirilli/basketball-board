@@ -20,6 +20,11 @@ Vanilla TypeScript + SVG, nessun framework. Unica dipendenza runtime: `jspdf`.
   curva quadratica (undefined = retta).
 - `model.ts#nextPhaseFrom`: tagli/palleggi/blocchi spostano il giocatore alla fine della linea;
   passaggi/consegnati spostano la palla (`hasBall`) al ricevente.
+- Alternative: `Play.branches` (un solo livello). Ogni `Branch` parte da una fase della linea principale
+  (`fromPhase` = id) e ha le sue `phases`. Lettere A, B… calcolate da `sortedBranches` (ordine per fase di
+  partenza); etichette fasi con `phaseLabel` ("3", "3A"). L'editor lavora su `editor.seq`
+  (linea principale o alternativa corrente, `editor.branchId`). Gli id delle fasi principali non vanno
+  rigenerati (romperebbero `fromPhase`).
 - Undo/redo: snapshot JSON dell'intero `Play` in `Editor.commit()`.
 - Persistenza: `localStorage` (`bb.plays.v1`, `bb.settings.v1`). Cambiare formato → nuova chiave o migrazione.
 

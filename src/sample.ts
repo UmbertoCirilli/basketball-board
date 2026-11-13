@@ -33,5 +33,15 @@ export function samplePlay(): Play {
     { id: uid(), kind: 'shot', from: t3('4').id, points: [{ x: t3('4').x, y: t3('4').y }, { x: 77.5, y: 20.5 }] },
   );
   play.phases.push(ph2, ph3);
+
+  // alternative read from phase 2
+  const alt = nextPhaseFrom(ph2);
+  const a = (label: string) => alt.tokens.find((x) => x.label === label)!;
+  alt.note = 'Se il difensore di 1 passa sotto il blocco: 1 si arresta e tira da fuori. 4 va a rimbalzo.';
+  alt.lines.push(
+    { id: uid(), kind: 'shot', from: a('1').id, points: [{ x: a('1').x, y: a('1').y }, { x: 74, y: 21 }] },
+    { id: uid(), kind: 'cut', from: a('4').id, points: [{ x: a('4').x, y: a('4').y }, { x: 90, y: 22 }] },
+  );
+  play.branches = [{ id: uid(), name: 'Se il difensore passa sotto', fromPhase: ph2.id, phases: [alt] }];
   return play;
 }

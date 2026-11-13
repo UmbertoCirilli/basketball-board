@@ -1,7 +1,20 @@
 import './style.css';
 import { Editor, LINE_TOOLS, TOKEN_TOOLS, type Tool } from './editor';
 import { lineIcon, selectIcon, tokenIcon } from './icons';
-import { addFive, clone, convertCourt, courtLabel, newPlay, uid } from './model';
+import {
+  addFive,
+  branchesFrom,
+  branchLetter,
+  branchStart,
+  branchTitle,
+  clone,
+  convertCourt,
+  courtLabel,
+  newPlay,
+  phaseLabel,
+  sortedBranches,
+  uid,
+} from './model';
 import { dataUrlToBlob, phaseToPng } from './raster';
 import { renderPhase } from './render';
 import { samplePlay } from './sample';
@@ -18,7 +31,7 @@ import {
   upsertPlay,
   type AppSettings,
 } from './store';
-import { CATEGORIES, type CourtType, type LineKind, type Play, type TokenKind } from './types';
+import { CATEGORIES, type CourtType, type LineKind, type Phase, type Play, type TokenKind } from './types';
 
 const $ = <T extends HTMLElement = HTMLElement>(sel: string) => document.querySelector(sel) as T;
 
@@ -157,6 +170,18 @@ function buildPanel(): void {
       h('button', { class: 'btn icon', onclick: closePanel, title: 'Chiudi' }, ['✕']),
     ]),
     h('section', { id: 'sel-section', class: 'card' }),
+    h('section', { id: 'branch-card', class: 'card branch-card' }, [
+      h('h3', { id: 'branch-title' }, ['Alternativa']),
+      h('p', { id: 'branch-info', class: 'hint' }),
+      h('label', {}, ['Nome / quando si usa', h('input', { id: 'branch-name', placeholder: 'es. Se X2 anticipa il passaggio' })]),
+      h('button', {
+        class: 'btn danger',
+        onclick: () => {
+          const b = editor.branch;
+          if (b && confirm(`Eliminare "${branchTitle(editor.play, b)}" e tutte le sue fasi?`)) editor.deleteBranch(b.id);
+        },
+      }, ['Elimina alternativa']),
+    ]),
     h('section', { class: 'card' }, [
       h('h3', { id: 'note-title' }, ['Note fase']),
       h('textarea', { id: 'phase-note', rows: 4, placeholder: 'Cosa succede in questa fase? (compare nel PDF sotto il disegno)' }),
@@ -182,6 +207,10 @@ function buildPanel(): void {
   bindText('#play-obj', (v) => (editor.play.objective = v));
   bindText('#play-desc', (v) => (editor.play.description = v));
   bindText('#play-title', (v) => (editor.play.title = v));
+  bindText('#branch-name', (v) => {
+    const b = editor.branch;
+    if (b) b.name = v;
+  });
 
   $<HTMLInputElement>('#ghost').addEventListener('change', (e) => {
     editor.showGhost = (e.target as HTMLInputElement).checked;
@@ -213,7 +242,7 @@ function bindText(sel: string, set: (v: string) => void): void {
     set(el.value);
     editor.render();
     scheduleSave();
-    if (sel === '#phase-note') renderPhases();
+    if (sel === '#phase-note' || sel === '#branch-name') renderPhases();
   });
   el.addEventListener('change', () => editor.commit());
 }
@@ -298,6 +327,7 @@ function renderSelection(): void {
   if (key) box.append(h('button', { class: 'btn danger', onclick: () => editor.deleteSelected() }, ['Elimina']));
 }
 
+let lastPos = '';
 function refreshUI(): void {
   const p = editor.play;
   setValue('#play-title', p.title);
@@ -307,12 +337,26 @@ function refreshUI(): void {
   setValue('#play-desc', p.description);
   $<HTMLSelectElement>('#play-court').value = p.court;
   $<HTMLInputElement>('#ghost').checked = editor.showGhost;
-  $('#note-title').textContent = `Note fase ${editor.phaseIndex + 1} di ${p.phases.length}`;
+  const b = editor.branch;
+  $('#note-title').textContent = `Note fase ${phaseLabel(p, b, editor.phaseIndex)}`;
   $<HTMLButtonElement>('#btn-undo').disabled = !editor.canUndo();
   $<HTMLButtonElement>('#btn-redo').disabled = !editor.canRedo();
   $<HTMLButtonElement>('#ph-left').disabled = editor.phaseIndex === 0;
-  $<HTMLButtonElement>('#ph-right').disabled = editor.phaseIndex === p.phases.length - 1;
-  document.querySelectorAll('.phase-chip').forEach((c, i) => c.classList.toggle('active', i === editor.phaseIndex));
+  $<HTMLButtonElement>('#ph-right').disabled = editor.phaseIndex === editor.seq.length - 1;
+
+  $('#branch-card').hidden = !b;
+  if (b) {
+    $('#branch-title').textContent = `Alternativa ${branchLetter(p, b.id)}`;
+    $('#branch-info').textContent =
+      `Parte dalla fase ${branchStart(p, b) + 1} della linea principale: invece di quello che succede dopo, succede questo.`;
+    setValue('#branch-name', b.name);
+  }
+
+  const posKey = `${p.id}:${editor.branchId}:${editor.phaseIndex}`;
+  if (posKey !== lastPos) {
+    lastPos = posKey;
+    renderPhases();
+  }
   renderSelection();
   renderQuickBar();
 }
@@ -339,26 +383,94 @@ function renderQuickBar(): void {
 
 // ------------------------------------------------------------------ phases
 
+/** Track tabs (main line / alternatives) and the phase thumbnails of the current track. */
 function renderPhases(): void {
-  const list = $('#phases');
-  list.replaceChildren(
-    ...editor.play.phases.map((ph, i) => {
-      const thumb = renderPhase(editor.play, ph, { style: settings.courtStyle });
-      return h('button', { class: 'phase-chip' + (i === editor.phaseIndex ? ' active' : ''), title: ph.note || `Fase ${i + 1}`, onclick: () => editor.goToPhase(i) }, [
-        thumb,
-        h('span', {}, [`Fase ${i + 1}`]),
-      ]);
-    }),
+  const play = editor.play;
+  const branches = sortedBranches(play);
+  const current = editor.branch;
+
+  const tracks = $('#tracks');
+  tracks.hidden = branches.length === 0;
+  tracks.replaceChildren(
+    h('button', { class: 'track' + (!current ? ' active' : ''), onclick: () => editor.goToPhase(0, null) }, ['Principale']),
+    ...branches.map((b) =>
+      h(
+        'button',
+        {
+          class: 'track alt' + (current?.id === b.id ? ' active' : ''),
+          title: `Parte dalla fase ${branchStart(play, b) + 1}`,
+          onclick: () => editor.goToPhase(0, b.id),
+        },
+        [h('strong', {}, [branchLetter(play, b.id)]), ` · ${b.name.trim() || 'dalla fase ' + (branchStart(play, b) + 1)}`],
+      ),
+    ),
   );
-  list.querySelector('.active')?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+
+  const chip = (ph: Phase, label: string, opts: { active: boolean; shared?: boolean; badge?: string; onclick: () => void }) =>
+    h(
+      'button',
+      {
+        class: 'phase-chip' + (opts.active ? ' active' : '') + (opts.shared ? ' shared' : '') + (current && !opts.shared ? ' alt' : ''),
+        title: ph.note || `Fase ${label}`,
+        onclick: opts.onclick,
+      },
+      [
+        renderPhase(play, ph, { style: settings.courtStyle }),
+        h('span', {}, [`Fase ${label}`]),
+        ...(opts.badge ? [h('em', { class: 'chip-badge' }, [opts.badge])] : []),
+      ],
+    );
+
+  const list = $('#phases');
+  if (!current) {
+    list.replaceChildren(
+      ...play.phases.map((ph, i) => {
+        const n = branchesFrom(play, ph.id).length;
+        return chip(ph, String(i + 1), {
+          active: i === editor.phaseIndex,
+          badge: n ? `+${n} alt.` : undefined,
+          onclick: () => editor.goToPhase(i, null),
+        });
+      }),
+    );
+  } else {
+    // shared main-line phases up to the branching point, then the alternative
+    const start = branchStart(play, current);
+    list.replaceChildren(
+      ...play.phases.slice(0, start + 1).map((ph, i) =>
+        chip(ph, String(i + 1), { active: false, shared: true, onclick: () => editor.goToPhase(i, null) }),
+      ),
+      h('span', { class: 'branch-arrow', title: branchTitle(play, current) }, ['↳']),
+      ...current.phases.map((ph, i) =>
+        chip(ph, phaseLabel(play, current, i), { active: i === editor.phaseIndex, onclick: () => editor.goToPhase(i) }),
+      ),
+    );
+  }
+  list.querySelector('.phase-chip.active')?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
 }
 
 $('#ph-next').onclick = () => editor.addNextPhase();
+$('#ph-alt').onclick = () => {
+  editor.addAlternative();
+  openPanel();
+  const name = document.querySelector<HTMLInputElement>('#branch-name');
+  if (name && !matchMedia('(pointer: coarse)').matches) name.focus();
+  toast(`Nuova alternativa dalla fase ${editor.branchPointIndex() + 1}: dalle un nome e disegna cosa succede.`, 3500);
+};
 $('#ph-dup').onclick = () => editor.duplicatePhase();
 $('#ph-left').onclick = () => editor.movePhase(-1);
 $('#ph-right').onclick = () => editor.movePhase(1);
 $('#ph-del').onclick = () => {
-  if (confirm(`Eliminare la fase ${editor.phaseIndex + 1}?`)) editor.deletePhase();
+  const play = editor.play;
+  const b = editor.branch;
+  const label = phaseLabel(play, b, editor.phaseIndex);
+  let msg = `Eliminare la fase ${label}?`;
+  if (b && b.phases.length <= 1) msg = `È l'unica fase di "${branchTitle(play, b)}": eliminare l'alternativa?`;
+  else if (!b) {
+    const n = branchesFrom(play, editor.phase.id).length;
+    if (n) msg = `Eliminare la fase ${label} e ${n === 1 ? "l'alternativa che parte" : `le ${n} alternative che partono`} da qui?`;
+  }
+  if (confirm(msg)) editor.deletePhase();
 };
 
 // ------------------------------------------------------------------ export
@@ -403,7 +515,7 @@ $('#btn-pdf').onclick = () =>
 $('#btn-png').onclick = () =>
   busy('Creo l’immagine…', async () => {
     const png = await phaseToPng(editor.play, editor.phase, settings.courtStyle, 1600);
-    await deliver(dataUrlToBlob(png.url), `${safeFilename(editor.play.title)}_fase${editor.phaseIndex + 1}.png`);
+    await deliver(dataUrlToBlob(png.url), `${safeFilename(editor.play.title)}_fase${phaseLabel(editor.play, editor.branch, editor.phaseIndex)}.png`);
   });
 
 $('#btn-undo').onclick = () => editor.undo();
@@ -452,7 +564,15 @@ function renderLibrary(): void {
       h('div', { class: 'lib-info' }, [
         h('button', { class: 'lib-title', onclick: () => openPlay(p) }, [p.title || 'Senza titolo']),
         h('div', { class: 'lib-meta' }, [
-          [p.category, courtLabel(p), `${p.phases.length} fasi`, new Date(p.updatedAt).toLocaleDateString('it-IT')].filter(Boolean).join(' · '),
+          [
+            p.category,
+            courtLabel(p),
+            `${p.phases.length} fasi`,
+            p.branches?.length ? `${p.branches.length} alternative` : '',
+            new Date(p.updatedAt).toLocaleDateString('it-IT'),
+          ]
+            .filter(Boolean)
+            .join(' · '),
         ]),
         h('div', { class: 'lib-actions' }, [
           h('button', { class: 'btn small', onclick: () => openPlay(p) }, ['Apri']),
@@ -484,7 +604,6 @@ function duplicatePlay(p: Play): void {
   copy.id = uid();
   copy.title = `${p.title} (copia)`;
   copy.createdAt = copy.updatedAt = Date.now();
-  for (const ph of copy.phases) ph.id = uid();
   upsertPlay(copy);
   upsertPlay(editor.play); // keep the open play as "last opened"
   renderLibrary();

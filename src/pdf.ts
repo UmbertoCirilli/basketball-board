@@ -1,8 +1,8 @@
 import { jsPDF } from 'jspdf';
-import { courtLabel } from './model';
+import { branchesFrom, branchLetter, branchStart, branchTitle, courtLabel, phaseLabel, sortedBranches } from './model';
 import { phaseToPng } from './raster';
 import type { AppSettings } from './store';
-import type { Play } from './types';
+import type { Phase, Play } from './types';
 
 const PAGE_W = 210;
 const PAGE_H = 297;
@@ -11,6 +11,7 @@ const CONTENT_W = PAGE_W - 2 * M;
 const BOTTOM = PAGE_H - 16; // keep room for the footer
 const ACCENT: [number, number, number] = [29, 58, 110];
 const GREY: [number, number, number] = [95, 102, 112];
+const ALT: [number, number, number] = [194, 87, 26];
 
 const lh = (pt: number) => pt * 0.3528 * 1.3; // line height in mm
 
@@ -49,7 +50,13 @@ async function writePlay(w: Writer, play: Play, settings: AppSettings): Promise<
   doc.rect(M, w.y, CONTENT_W, 1.2, 'F');
   w.y += 4;
   w.paragraph(play.title || 'Senza titolo', 18, { bold: true, color: ACCENT });
-  const meta = [play.category, courtLabel(play), `${play.phases.length} ${play.phases.length === 1 ? 'fase' : 'fasi'}`]
+  const branches = sortedBranches(play);
+  const meta = [
+    play.category,
+    courtLabel(play),
+    `${play.phases.length} ${play.phases.length === 1 ? 'fase' : 'fasi'}`,
+    branches.length ? `${branches.length} ${branches.length === 1 ? 'alternativa' : 'alternative'}` : '',
+  ]
     .filter(Boolean)
     .join('  ·  ');
   w.paragraph(meta, 9.5, { color: GREY });
@@ -67,31 +74,79 @@ async function writePlay(w: Writer, play: Play, settings: AppSettings): Promise<
   }
   w.y += 2;
 
+  // main line; phases where alternatives start point to them
+  await phaseGrid(
+    w,
+    play,
+    settings,
+    play.phases.map((ph, i) => ({
+      phase: ph,
+      label: `Fase ${phaseLabel(play, null, i)}`,
+      color: ACCENT,
+      refs: branchesFrom(play, ph.id).map((b) => `Alternativa ${branchLetter(play, b.id)}${b.name.trim() ? ': ' + b.name.trim() : ''}`),
+    })),
+  );
+
+  // one section per alternative
+  for (const b of branches) {
+    const start = branchStart(play, b);
+    w.y += 2;
+    w.ensure(lh(13) + lh(9.5) + 70); // keep the heading with the first diagrams
+    doc.setFillColor(...ALT);
+    doc.rect(M, w.y, CONTENT_W, 0.9, 'F');
+    w.y += 3;
+    w.paragraph(branchTitle(play, b), 13, { bold: true, color: ALT });
+    const next = start + 1 < play.phases.length ? ` (al posto della Fase ${start + 2})` : '';
+    w.paragraph(`Parte dalla Fase ${start + 1}${next}`, 9.5, { color: GREY });
+    w.y += 3;
+    await phaseGrid(
+      w,
+      play,
+      settings,
+      b.phases.map((ph, i) => ({ phase: ph, label: `Fase ${phaseLabel(play, b, i)}`, color: ALT, refs: [] })),
+    );
+  }
+}
+
+interface Cell {
+  phase: Phase;
+  label: string;
+  color: [number, number, number];
+  /** Extra lines under the note (references to alternatives). */
+  refs: string[];
+}
+
+/** Diagrams with title and notes: two per row for half court, one for full court. */
+async function phaseGrid(w: Writer, play: Play, settings: AppSettings, cells: Cell[]): Promise<void> {
+  const { doc } = w;
   const cols = play.court === 'half' ? 2 : 1;
   const gap = 8;
   const colW = cols === 2 ? (CONTENT_W - gap) / 2 : CONTENT_W * 0.86;
   const offsetX = cols === 2 ? M : M + (CONTENT_W - colW) / 2;
   const noteSize = 9.5;
+  const header = lh(10.5) + 1;
 
-  for (let i = 0; i < play.phases.length; i += cols) {
-    const row = play.phases.slice(i, i + cols);
-    const images = await Promise.all(row.map((ph) => phaseToPng(play, ph, settings.courtStyle, cols === 2 ? 1100 : 1700)));
+  for (let i = 0; i < cells.length; i += cols) {
+    const row = cells.slice(i, i + cols);
+    const images = await Promise.all(row.map((c) => phaseToPng(play, c.phase, settings.courtStyle, cols === 2 ? 1100 : 1700)));
     const imgH = Math.max(...images.map((im) => (colW * im.h) / im.w));
+    doc.setFont('helvetica', 'normal');
     doc.setFontSize(noteSize);
-    const notes = row.map((ph) => (ph.note.trim() ? (doc.splitTextToSize(ph.note.trim(), colW) as string[]) : []));
-    const noteH = Math.max(...notes.map((n) => n.length)) * lh(noteSize);
-    const header = lh(10.5) + 1;
+    const notes = row.map((c) => (c.phase.note.trim() ? (doc.splitTextToSize(c.phase.note.trim(), colW) as string[]) : []));
+    doc.setFont('helvetica', 'bold');
+    const refs = row.map((c) => c.refs.flatMap((r) => doc.splitTextToSize('» ' + r, colW) as string[]));
+    const textH = Math.max(...row.map((_, j) => notes[j].length + refs[j].length + (refs[j].length ? 0.4 : 0))) * lh(noteSize);
     // a row (title + diagram + notes) stays together when it fits on a page
-    w.ensure(Math.min(header + imgH + noteH + 2, BOTTOM - M));
+    w.ensure(Math.min(header + imgH + textH + 2, BOTTOM - M));
 
     const top = w.y;
-    row.forEach((_, j) => {
+    row.forEach((c, j) => {
       const x = offsetX + j * (colW + gap);
       let y = top;
       doc.setFont('helvetica', 'bold');
       doc.setFontSize(10.5);
-      doc.setTextColor(...ACCENT);
-      doc.text(`Fase ${i + j + 1}`, x, y + 10.5 * 0.3528);
+      doc.setTextColor(...c.color);
+      doc.text(c.label, x, y + 10.5 * 0.3528);
       y += header;
       const im = images[j];
       const h = (colW * im.h) / im.w;
@@ -107,8 +162,17 @@ async function writePlay(w: Writer, play: Play, settings: AppSettings): Promise<
         doc.text(line, x, y + noteSize * 0.3528);
         y += lh(noteSize);
       }
+      if (refs[j].length) {
+        y += lh(noteSize) * 0.4;
+        doc.setFont('helvetica', 'bold');
+        doc.setTextColor(...ALT);
+        for (const line of refs[j]) {
+          doc.text(line, x, y + noteSize * 0.3528);
+          y += lh(noteSize);
+        }
+      }
     });
-    w.y = top + header + imgH + 2 + noteH + 6;
+    w.y = top + header + imgH + 2 + textH + 6;
   }
 }
 

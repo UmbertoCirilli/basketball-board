@@ -15,6 +15,9 @@ Lavagna digitale per disegnare schemi ed esercizi di basket e produrre PDF da co
 - **Fasi**: ogni schema è una sequenza di fasi. **+ Fase** crea la fase successiva spostando i giocatori
   alla fine dei loro movimenti; la palla segue passaggi e consegnati. Le posizioni della fase precedente
   si vedono in trasparenza.
+- **Alternative (letture)**: da una fase della linea principale, **+ Alternativa** crea un percorso
+  diverso (es. "Se X2 anticipa") con le sue fasi, numerate 3A, 4A… Nel PDF la fase di partenza rimanda
+  alle alternative, che hanno poi ciascuna la sua sezione.
 - **Note** per ogni fase, più titolo, categoria, obiettivo e descrizione dello schema.
 - **Libreria**: gli schemi si salvano automaticamente nel browser. Ricerca, filtri per categoria,
   duplica/elimina. **Esporta file / Importa file** (JSON) per fare backup o passare gli schemi da un
