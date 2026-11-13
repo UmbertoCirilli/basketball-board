@@ -15,6 +15,64 @@ const ALT: [number, number, number] = [194, 87, 26];
 
 const lh = (pt: number) => pt * 0.3528 * 1.3; // line height in mm
 
+// ------------------------------------------------------------ fonts
+
+/**
+ * Roboto is embedded so accented text stays correct when copied or searched
+ * (the built-in Helvetica only draws it). Falls back to Helvetica if the font
+ * files cannot be loaded (e.g. first use while offline).
+ */
+const FONT_FILES = { normal: 'Roboto-Regular.ttf', bold: 'Roboto-Bold.ttf' } as const;
+let fontData: Promise<Record<keyof typeof FONT_FILES, string> | null> | null = null;
+let fontName = 'helvetica';
+
+async function toBase64(buf: ArrayBuffer): Promise<string> {
+  const url = await new Promise<string>((resolve, reject) => {
+    const r = new FileReader();
+    r.onload = () => resolve(r.result as string);
+    r.onerror = () => reject(r.error);
+    r.readAsDataURL(new Blob([buf]));
+  });
+  return url.slice(url.indexOf(',') + 1);
+}
+
+export function preloadFonts(): Promise<Record<keyof typeof FONT_FILES, string> | null> {
+  fontData ??= (async () => {
+    try {
+      const load = async (file: string) => {
+        const res = await fetch(new URL(`fonts/${file}`, document.baseURI));
+        if (!res.ok) throw new Error(res.statusText);
+        return toBase64(await res.arrayBuffer());
+      };
+      const [normal, bold] = await Promise.all([load(FONT_FILES.normal), load(FONT_FILES.bold)]);
+      return { normal, bold };
+    } catch {
+      fontData = null; // retry next time
+      return null;
+    }
+  })();
+  return fontData;
+}
+
+async function createDoc(): Promise<jsPDF> {
+  const doc = new jsPDF({ unit: 'mm', format: 'a4' });
+  const fonts = await preloadFonts();
+  if (fonts) {
+    for (const style of ['normal', 'bold'] as const) {
+      doc.addFileToVFS(FONT_FILES[style], fonts[style]);
+      doc.addFont(FONT_FILES[style], 'Roboto', style);
+    }
+    fontName = 'Roboto';
+  } else {
+    fontName = 'helvetica';
+  }
+  return doc;
+}
+
+function setFont(doc: jsPDF, style: 'normal' | 'bold'): void {
+  doc.setFont(fontName, style);
+}
+
 class Writer {
   y = M;
   constructor(readonly doc: jsPDF) {}
@@ -31,7 +89,7 @@ class Writer {
     const { doc } = this;
     const x = opts.x ?? M;
     const width = opts.width ?? CONTENT_W;
-    doc.setFont('helvetica', opts.bold ? 'bold' : 'normal');
+    setFont(doc,opts.bold ? 'bold' : 'normal');
     doc.setFontSize(size);
     doc.setTextColor(...(opts.color ?? [30, 30, 30]));
     const lines = doc.splitTextToSize(text, width) as string[];
@@ -130,10 +188,10 @@ async function phaseGrid(w: Writer, play: Play, settings: AppSettings, cells: Ce
     const row = cells.slice(i, i + cols);
     const images = await Promise.all(row.map((c) => phaseToPng(play, c.phase, settings.courtStyle, cols === 2 ? 1100 : 1700)));
     const imgH = Math.max(...images.map((im) => (colW * im.h) / im.w));
-    doc.setFont('helvetica', 'normal');
+    setFont(doc,'normal');
     doc.setFontSize(noteSize);
     const notes = row.map((c) => (c.phase.note.trim() ? (doc.splitTextToSize(c.phase.note.trim(), colW) as string[]) : []));
-    doc.setFont('helvetica', 'bold');
+    setFont(doc,'bold');
     const refs = row.map((c) => c.refs.flatMap((r) => doc.splitTextToSize('» ' + r, colW) as string[]));
     const textH = Math.max(...row.map((_, j) => notes[j].length + refs[j].length + (refs[j].length ? 0.4 : 0))) * lh(noteSize);
     // a row (title + diagram + notes) stays together when it fits on a page
@@ -143,7 +201,7 @@ async function phaseGrid(w: Writer, play: Play, settings: AppSettings, cells: Ce
     row.forEach((c, j) => {
       const x = offsetX + j * (colW + gap);
       let y = top;
-      doc.setFont('helvetica', 'bold');
+      setFont(doc,'bold');
       doc.setFontSize(10.5);
       doc.setTextColor(...c.color);
       doc.text(c.label, x, y + 10.5 * 0.3528);
@@ -155,7 +213,7 @@ async function phaseGrid(w: Writer, play: Play, settings: AppSettings, cells: Ce
       doc.setLineWidth(0.2);
       doc.rect(x, y, colW, h);
       y += h + 2;
-      doc.setFont('helvetica', 'normal');
+      setFont(doc,'normal');
       doc.setFontSize(noteSize);
       doc.setTextColor(30, 30, 30);
       for (const line of notes[j]) {
@@ -164,7 +222,7 @@ async function phaseGrid(w: Writer, play: Play, settings: AppSettings, cells: Ce
       }
       if (refs[j].length) {
         y += lh(noteSize) * 0.4;
-        doc.setFont('helvetica', 'bold');
+        setFont(doc,'bold');
         doc.setTextColor(...ALT);
         for (const line of refs[j]) {
           doc.text(line, x, y + noteSize * 0.3528);
@@ -181,7 +239,7 @@ function footers(doc: jsPDF, settings: AppSettings, skipFirst: boolean): void {
   for (let i = 1; i <= n; i++) {
     if (skipFirst && i === 1) continue;
     doc.setPage(i);
-    doc.setFont('helvetica', 'normal');
+    setFont(doc,'normal');
     doc.setFontSize(8);
     doc.setTextColor(...GREY);
     doc.setDrawColor(220, 223, 228);
@@ -193,7 +251,7 @@ function footers(doc: jsPDF, settings: AppSettings, skipFirst: boolean): void {
 }
 
 export async function playPdf(play: Play, settings: AppSettings): Promise<Blob> {
-  const doc = new jsPDF({ unit: 'mm', format: 'a4' });
+  const doc = await createDoc();
   doc.setProperties({ title: play.title, creator: 'Basketball Board' });
   await writePlay(new Writer(doc), play, settings);
   footers(doc, settings, false);
@@ -203,18 +261,18 @@ export async function playPdf(play: Play, settings: AppSettings): Promise<Blob> 
 const INDEX_ROWS = 34;
 
 export async function playbookPdf(plays: Play[], settings: AppSettings, title: string): Promise<Blob> {
-  const doc = new jsPDF({ unit: 'mm', format: 'a4' });
+  const doc = await createDoc();
   doc.setProperties({ title, creator: 'Basketball Board' });
 
   // cover
   doc.setFillColor(...ACCENT);
   doc.rect(0, 0, PAGE_W, 110, 'F');
   doc.setTextColor(255, 255, 255);
-  doc.setFont('helvetica', 'bold');
+  setFont(doc,'bold');
   doc.setFontSize(34);
   doc.text(doc.splitTextToSize(title, CONTENT_W) as string[], M, 62);
   if (settings.teamName) {
-    doc.setFont('helvetica', 'normal');
+    setFont(doc,'normal');
     doc.setFontSize(16);
     doc.text(settings.teamName, M, 92);
   }
@@ -238,13 +296,13 @@ export async function playbookPdf(plays: Play[], settings: AppSettings, title: s
     doc.setPage(page);
     let y = M + 4;
     if (i % INDEX_ROWS === 0) {
-      doc.setFont('helvetica', 'bold');
+      setFont(doc,'bold');
       doc.setFontSize(18);
       doc.setTextColor(...ACCENT);
       doc.text('Indice', M, y + 6);
     }
     y = M + 20 + (i % INDEX_ROWS) * 7;
-    doc.setFont('helvetica', 'normal');
+    setFont(doc,'normal');
     doc.setFontSize(11);
     doc.setTextColor(30, 30, 30);
     const label = `${i + 1}.  ${play.title || 'Senza titolo'}`;

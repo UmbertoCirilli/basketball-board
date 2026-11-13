@@ -30,6 +30,9 @@ Vanilla TypeScript + SVG, nessun framework. Unica dipendenza runtime: `jspdf`.
 
 ## Convenzioni
 
-- Testi UI e PDF in italiano; jsPDF usa Helvetica standard (WinAnsi): niente emoji nel PDF.
+- Testi UI e PDF in italiano. Il PDF incorpora Roboto (`public/fonts`, OFL) caricato al primo export
+  (`pdf.ts#preloadFonts`); se non si carica ripiega su Helvetica.
+- Difensori: rosso scuro con alone bianco (leggibili sul parquet); le linee che partono da un difensore
+  sono rosse; i token si disegnano a strati (difensori sotto, attaccanti sopra, testo in cima).
 - Mobile-first per il touch: pointer events + `touch-action: none` sulla lavagna; layout mobile sotto 860px.
 - Commit con l'identità personale configurata nel repo (non quella aziendale).

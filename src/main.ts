@@ -763,5 +763,5 @@ refreshUI();
 if ('serviceWorker' in navigator && import.meta.env.PROD) {
   navigator.serviceWorker.register('./sw.js').catch(() => {});
   // warm the cache so PDF export also works offline
-  setTimeout(() => import('./pdf').catch(() => {}), 3000);
+  setTimeout(() => import('./pdf').then((m) => m.preloadFonts()).catch(() => {}), 3000);
 }

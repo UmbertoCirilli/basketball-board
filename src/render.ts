@@ -15,7 +15,7 @@ import type { Line, Phase, Play, Pt, Token } from './types';
 export const TOKEN_R = 4.2;
 export const COLORS = {
   offense: '#1d3a6e',
-  defense: '#c62828',
+  defense: '#b0101a',
   ink: '#1b1f24',
   ball: '#f08a24',
   cone: '#f26b1d',
@@ -33,6 +33,11 @@ export interface RenderOptions {
   /** Tokens of the previous phase, drawn faded for reference. */
   ghost?: Token[];
 }
+
+const LAYER: Record<Token['kind'], number> = { cone: 0, defense: 1, coach: 2, ball: 3, offense: 4, text: 5 };
+
+/** White outline that keeps red/dark marks readable on the wooden floor. */
+const HALO = { stroke: '#fff', 'stroke-width': 1.3, 'paint-order': 'stroke', 'stroke-linejoin': 'round' };
 
 export function tokenMap(phase: Phase): Map<string, Token> {
   return new Map(phase.tokens.map((t) => [t.id, t]));
@@ -59,7 +64,9 @@ export function renderPhase(play: Play, phase: Phase, opts: RenderOptions = {}):
   svg.appendChild(linesG);
 
   const tokG = s('g', { class: 'tokens' });
-  for (const t of phase.tokens) {
+  // defenders at the bottom, attackers above them, text on top
+  const ordered = [...phase.tokens].sort((a, b) => LAYER[a.kind] - LAYER[b.kind]);
+  for (const t of ordered) {
     const g = drawToken(t, opts.selectedId === t.id);
     if (opts.interactive) {
       g.setAttribute('data-token', t.id);
@@ -107,16 +114,17 @@ export function drawToken(t: Token, selected: boolean): SVGGElement {
       const txt = svgText('X', {
         'text-anchor': 'middle',
         'dominant-baseline': 'central',
-        'font-size': 7.5,
-        'font-weight': 700,
+        'font-size': 7.8,
+        'font-weight': 800,
         fill: COLORS.defense,
         x: -0.9,
         y: 0.2,
+        ...HALO,
       });
       g.appendChild(txt);
       if (t.label) {
         g.appendChild(
-          svgText(t.label, { 'font-size': 3.8, 'font-weight': 700, fill: COLORS.defense, x: 1.9, y: 3.6 }),
+          svgText(t.label, { 'font-size': 4, 'font-weight': 800, fill: COLORS.defense, x: 1.9, y: 3.7, ...HALO, 'stroke-width': 1 }),
         );
       }
       break;
@@ -216,7 +224,8 @@ function bar(at: Pt, dir: Pt, half: number, color: string, width = 0.9): SVGLine
 
 export function drawLine(line: Line, tokens: Map<string, Token>, opts: RenderOptions = {}): SVGGElement {
   const selected = opts.selectedId === line.id;
-  const color = selected ? COLORS.select : COLORS.ink;
+  const byDefender = !!line.from && tokens.get(line.from)?.kind === 'defense';
+  const color = selected ? COLORS.select : byDefender ? COLORS.defense : COLORS.ink;
   const g = s('g', { class: 'line' });
   const raw = linePolyline(line, tokens);
   const startTrim = line.from ? TOKEN_R + 0.9 : 0;
